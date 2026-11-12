@@ -1,0 +1,125 @@
+# KISS Open License Version 1.0 (KOL-v1)
+#
+# SPDX-FileCopyrightText: 2026 I-plusplus Inc.
+# SPDX-License-Identifier: LicenseRef-KOL-v1
+#
+# Copyright remains with its respective holders; original copyright and attribution notices must be preserved.
+# Contributors may add copyright notices for their own original modifications.
+# Distributed modifications must be identified as required by Section 4(c) of KOL-v1.
+#
+# Use, modification, distribution, and incorporation into commercial or proprietary software are permitted
+# without license fees or source disclosure, subject to all terms of the complete KOL-v1 license.
+#
+# Contributors grant the patent permissions stated in KOL-v1. Outputs are not covered merely because a
+# KOL-licensed tool produced them; embedded licensed material remains subject to applicable license terms.
+#
+# THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OR LIABILITY TO THE EXTENT PERMITTED BY APPLICABLE LAW.
+#
+# This header is a summary, not a separate license or an amendment to KOL-v1.
+# All terms and conditions of KOL-v1 apply. See the accompanying LICENSE file for the complete license text.
+
+name: Minimum CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  documents:
+    name: Documentation checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate bootstrap documents and relative links
+        shell: bash
+        run: |
+          python3 -I -B - <<'PYCODE'
+          import json
+          import pathlib
+          import re
+          import subprocess
+
+          root = pathlib.Path('.')
+          names = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+          names = [name for name in names if name]
+          if not names:
+              raise SystemExit('Empty repository inventory')
+          documents = [name for name in names if name.endswith('.md')]
+          if not documents:
+              raise SystemExit('No documents checked')
+          for name in names:
+              path = root / name
+              if not path.is_file() or path.is_symlink():
+                  raise SystemExit('Expected regular tracked file: ' + name)
+              text = path.read_text(encoding='ascii')
+              if not text.strip():
+                  raise SystemExit('Empty tracked file: ' + name)
+              if name.endswith('.json'):
+                  json.loads(text)
+          for name in documents:
+              path = root / name
+              text = path.read_text(encoding='ascii')
+              if not re.search(r'^# .+', text, re.MULTILINE):
+                  raise SystemExit('Missing document heading: ' + name)
+              for link in re.findall(r'\[[^\]]+\]\(([^)]+)\)', text):
+                  if '://' not in link and not link.startswith('#'):
+                      target = link.split('#', 1)[0]
+                      if target and not (path.parent / target).is_file():
+                          raise SystemExit('Broken relative link: ' + link)
+          readme = (root / 'README.md').read_text(encoding='ascii')
+          if 'No implementation is included' not in readme:
+              raise SystemExit('Bootstrap implementation status must remain explicit')
+          print(f'Validated {len(names)} tracked files and {len(documents)} documents')
+          PYCODE
+
+  license:
+    name: License policy checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Retrieve the reviewed checker artifact
+        shell: bash
+        env:
+          CHECKER_URL: https://github.com/i-pp/license-check-ci/releases/download/v0.1.0/license-check-0.1.0.pyz
+          CHECKER_SHA256: 2f48645fe866af8bdbe82de5665b05e79188c53f09daf0852fcc71fa6559ef0b
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            --proto '=https' --proto-redir '=https' \
+            --connect-timeout 15 --max-time 120 --retry 2 \
+            "$CHECKER_URL" -o "$RUNNER_TEMP/license-check.pyz"
+          printf '%s  %s\n' "$CHECKER_SHA256" "$RUNNER_TEMP/license-check.pyz" | sha256sum --check --strict -
+      - name: Verify declared license evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I -B "$RUNNER_TEMP/license-check.pyz" \
+            --root "$GITHUB_WORKSPACE" \
+            --policy .github/license-policy.json \
+            --report "$RUNNER_TEMP/license-report.json"
+          test -s "$RUNNER_TEMP/license-report.json"
+  minimum_ci:
+    name: Minimum CI
+    needs: [documents, license]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require all minimum checks to succeed
+        shell: bash
+        env:
+          SOURCE_RESULT: ${{ needs.documents.result }}
+          LICENSE_RESULT: ${{ needs.license.result }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_RESULT" = success
+          test "$LICENSE_RESULT" = success
