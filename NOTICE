@@ -1,0 +1,9 @@
+PETER repository bootstrap
+Copyright 2026 I-plusplus Inc.
+
+This repository currently contains only project-owned administrative documents
+and CI configuration. These files are provided under KISS Open License Version
+1.0 (KOL-v1); see LICENSE. Original copyright and attribution notices must be
+preserved. No third-party implementation, model, SDK, or runtime is included.
+Future third-party material remains subject to its original license and must
+receive a separate evidence classification before it can pass Minimum CI.
